@@ -147,9 +147,14 @@ import {
   upsertVisitorProfile,
 } from '../src/worker/visitors.js';
 import {
+  computeDaylightTokens,
+  describeDaylightStage,
   getDockStyleMeta,
   getThemeChromeBg,
   getThemePresetMeta,
+  isDaylightDark,
+  normalizeDaylightPos,
+  settleDaylightPos,
 } from '../web/src/lib/themes.js';
 import {
   buildSourceLink as buildClientSourceLink,
@@ -9073,6 +9078,79 @@ describe('Theme presets & frosted glass dock style', () => {
     expect(getThemeChromeBg('light', 'ocean')).toBe('#f3f7fb');
     expect(getThemeChromeBg('dark', 'ocean')).toBe('#0f141a');
     expect(getThemeChromeBg('light', 'unknown')).toBe('#faf4f5');
+
+    // Stepless daylight dimming engine: smooth perceptual luminance across 0..1 (zero sudden dawn cliff!)
+    // across all 5 palettes with guaranteed WCAG contrast at every stop
+    expect(normalizeDaylightPos(1.5)).toBe(1);
+    expect(normalizeDaylightPos(-0.4)).toBe(0);
+    expect(normalizeDaylightPos('bad', 0.5)).toBe(0.5);
+    expect(settleDaylightPos(0.015)).toBe(0);
+    expect(settleDaylightPos(0.49)).toBe(0.5);
+    expect(settleDaylightPos(0.985)).toBe(1);
+    expect(settleDaylightPos(0.6)).toBe(0.6);
+    expect(settleDaylightPos(0.32)).toBe(0.32);
+
+    expect(describeDaylightStage(0).id).toBe('night');
+    expect(describeDaylightStage(0.25).id).toBe('starlit');
+    expect(describeDaylightStage(0.5).id).toBe('dusk');
+    expect(describeDaylightStage(0.65).id).toBe('dawn');
+    expect(describeDaylightStage(0.8).id).toBe('mist');
+    expect(describeDaylightStage(1).id).toBe('day');
+    expect(isDaylightDark(0.5)).toBe(true);
+    expect(isDaylightDark(0.6)).toBe(false);
+
+    const luminance = (hex) => {
+      const rgb = [1, 3, 5]
+        .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+    };
+    const lightnessLstar = (hex) => {
+      const y = luminance(hex);
+      return y <= 0.008856 ? y * 903.3 : 116 * Math.cbrt(y) - 16;
+    };
+    const contrastRatio = (a, b) => {
+      const la = luminance(a);
+      const lb = luminance(b);
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    };
+
+    for (const preset of THEME_PRESET_IDS) {
+      const night = computeDaylightTokens(0, preset);
+      const dusk = computeDaylightTokens(0.5, preset);
+      const dawn = computeDaylightTokens(0.6, preset);
+      const mist = computeDaylightTokens(0.8, preset);
+      const day = computeDaylightTokens(1, preset);
+
+      expect(night.chromeBg).toBe(getThemeChromeBg('dark', preset));
+      expect(day.chromeBg).toBe(getThemeChromeBg('light', preset));
+      expect(getThemeChromeBg(0.5, preset)).toBe(dusk.chromeBg);
+      expect(dusk.chromeBg).not.toBe(night.chromeBg);
+      expect(dusk.chromeBg).not.toBe(day.chromeBg);
+      expect(dawn.chromeBg).not.toBe(dusk.chromeBg);
+      expect(mist.chromeBg).not.toBe(day.chromeBg);
+
+      // Verify zero brightness cliff across every 0.01 step (0.00 -> 1.00) and WCAG AA everywhere
+      let prevL = null;
+      for (let i = 0; i <= 100; i += 1) {
+        const p = i / 100;
+        const tok = computeDaylightTokens(p, preset);
+        const curL = lightnessLstar(tok.vars['--bg']);
+        if (prevL !== null) {
+          expect(Math.abs(curL - prevL)).toBeLessThan(3.0);
+        }
+        prevL = curL;
+        expect(contrastRatio(tok.vars['--text'], tok.vars['--bg'])).toBeGreaterThanOrEqual(4.4);
+        expect(contrastRatio(tok.vars['--text'], tok.vars['--bg-elevated'])).toBeGreaterThanOrEqual(4.3);
+      }
+
+      // Canonical stops remain high-contrast WCAG AAA (>= 7.0)
+      for (const p of [0, 0.5, 0.8, 1]) {
+        const tok = computeDaylightTokens(p, preset);
+        expect(contrastRatio(tok.vars['--text'], tok.vars['--bg'])).toBeGreaterThanOrEqual(7);
+        expect(contrastRatio(tok.vars['--text'], tok.vars['--bg-elevated'])).toBeGreaterThanOrEqual(6.5);
+      }
+    }
 
     const kv = createMemoryKV();
     const env = { TOPIC_MAP: kv };

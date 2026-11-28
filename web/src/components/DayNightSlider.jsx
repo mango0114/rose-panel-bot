@@ -1,23 +1,26 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { haptic, lockVerticalSwipes } from '../lib/telegram.js';
+import { describeDaylightStage, settleDaylightPos } from '../lib/themes.js';
 
-// Bubble-lens day/night slider: 0 = night (dark), 0.5 = dusk (follow Telegram), 1 = day (light).
-// Rendered on a fine 224x84 Retina micro-pixel grid (2x Retina native on the 112x42 track, exact
-// 1:1 CSS px inside the ZOOM = 2 crystal bubble magnifier) using a curated 19-color Rose-Porcelain
-// lineless flat-pixel palette. Completely alive when idle and continuously scrubbed when dragged.
+// Stepless bubble-lens daylight slider: continuous 0.00 (Midnight) -> 0.50 (Sunset Dusk)
+// -> 0.75 (Morning Mist) -> 1.00 (Bright Day), driving real-time full-page dimming & atmosphere.
+// Rendered on a fine 224x84 Retina micro-pixel grid (2x Retina native on the 112x42 track, sharp
+// 2.15x crystal jelly-glass bubble magnifier) with sweeping dawn/dusk terminator curtain,
+// progressive sequential fairy lights, sunset rim highlights, and live pixel bunny storytelling.
 
 const W = 112;
 const H = 42;
 const PAD = 2;
 const D = 38;
 const TRAVEL = W - PAD * 2 - D;
-const ZOOM = 2;
+const ZOOM = 2.15;
 const VW = 224;
 const VH = 84;
 const GROUND = 68;
 
 export const THEME_MODES = ['dark', 'auto', 'light'];
-const MODE_LABEL = { dark: '夜晚 · 深色', auto: '黄昏 · 跟随 Telegram', light: '白天 · 浅色' };
+const HAPTIC_NOTCHES = [0, 0.25, 0.5, 0.75, 1];
+const NOTCH_HALF = 0.04;
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -59,7 +62,7 @@ function mixHex(a, b, t) {
   return `rgb(${A.map((v, i) => Math.round(lerp(v, B[i], t))).join(',')})`;
 }
 function mix3(night, dusk, day, p) {
-  const qp = Math.round(clamp(p, 0, 1) * 24) / 24;
+  const qp = Math.round(clamp(p, 0, 1) * 96) / 96;
   return qp <= 0.5 ? mixHex(night, dusk, qp * 2) : mixHex(dusk, day, (qp - 0.5) * 2);
 }
 
@@ -593,6 +596,25 @@ function PixelCottage({ cp, tick }) {
       <path d={ROOF_STEPS_PATH} fill={roofMain} />
       <path d={ROOF_HIGHLIGHT_PATH} fill={roofHi} />
       <rect x={13} y={41} width={54} height={2} fill={roofShade} />
+      {/* 1px Golden-Hour Sunset / Dawn Roof Ridge Rim Light */}
+      {cp > 0.2 && cp < 0.88 && (
+        <path
+          d={rectsPath([
+            [37, 23, 6, 1],
+            [49, 19, 9, 1],
+            [43, 25, 3, 1],
+            [46, 27, 3, 1],
+            [49, 29, 3, 1],
+            [52, 31, 3, 1],
+            [55, 33, 3, 1],
+            [58, 35, 3, 1],
+            [61, 37, 3, 1],
+            [64, 39, 3, 1],
+          ])}
+          fill={C.cream}
+          opacity={Number((smooth(0.2, 0.46, cp) * (1 - smooth(0.66, 0.88, cp)) * 0.85).toFixed(2))}
+        />
+      )}
 
       {/* Hanging Porch Lantern on Left Eave (x = 13..17, y = 43..52) */}
       <rect x={15} y={43} width={1} height={3} fill={wood} />
@@ -746,9 +768,14 @@ export function DayNightScene({ p, motion = 0, facing = -1 }) {
   // Shooting star streak every ~2.5s at night
   const shootStep = cp < 0.34 ? tick % 20 : -1;
 
-  // Fairy lights visible at BOTH night & dusk (twinkling continuously even when idle!)
-  const fairyOpacity = Number((1 - smooth(0.62, 0.85, cp)).toFixed(2));
-  const showClouds = cp >= 0.46;
+  // Bubble center X mapped onto the 224x84 micro-pixel grid for the sweeping dawn/dusk terminator
+  const knobPx = Math.round((PAD + D / 2 + cp * TRAVEL) * 2);
+  const terminatorStrength = Math.sin(cp * Math.PI);
+  const rimStrength = smooth(0.2, 0.48, cp) * (1 - smooth(0.68, 0.92, cp));
+
+  // Fairy lights visible sequentially along the catenary wire as twilight & night sweep across
+  const showFairyWire = cp < 0.88;
+  const showClouds = cp >= 0.44;
   const cloudDriftA = (Math.floor(tick / 3) % 16) - 8;
   const cloudDriftB = (Math.floor(tick / 4) % 14) - 7;
 
@@ -790,6 +817,48 @@ export function DayNightScene({ p, motion = 0, facing = -1 }) {
       <rect x={0} y={33} width={VW} height={11} fill={sky3} />
       <rect x={0} y={44} width={VW} height={12} fill={sky4} />
       <rect x={0} y={56} width={VW} height={12} fill={sky5} />
+
+      {/* Sweeping Dawn/Dusk Terminator Light Curtain following the bubble across the sky */}
+      {terminatorStrength > 0.08 && (
+        <g>
+          {/* Cooler starlit shade ahead (right of bubble) while morning sweeps in from the left */}
+          {knobPx + 14 < VW && (
+            <rect
+              x={knobPx + 14}
+              y={0}
+              width={VW - (knobPx + 14)}
+              height={GROUND}
+              fill={C.ink}
+              opacity={Number((terminatorStrength * 0.22).toFixed(2))}
+            />
+          )}
+          {/* Stepped 16-bit golden-peach terminator shimmer columns centered on knobPx */}
+          <rect
+            x={clamp(knobPx - 24, 0, VW)}
+            y={0}
+            width={48}
+            height={GROUND}
+            fill={cp < 0.55 ? C.coral : C.peach}
+            opacity={Number((terminatorStrength * 0.14).toFixed(2))}
+          />
+          <rect
+            x={clamp(knobPx - 12, 0, VW)}
+            y={0}
+            width={24}
+            height={GROUND}
+            fill={C.peach}
+            opacity={Number((terminatorStrength * 0.22).toFixed(2))}
+          />
+          <rect
+            x={clamp(knobPx - 4, 0, VW)}
+            y={6}
+            width={8}
+            height={GROUND - 6}
+            fill={C.cream}
+            opacity={Number((terminatorStrength * (tick % 6 < 3 ? 0.26 : 0.18)).toFixed(2))}
+          />
+        </g>
+      )}
 
       {/* Night Sky: pinpoint stars, sparkling diamond stars, shooting star & crescent moon */}
       {showNight && (
@@ -882,24 +951,65 @@ export function DayNightScene({ p, motion = 0, facing = -1 }) {
       <path d={FAR_MOUNTAIN_PATH} fill={farMtn} />
       <path d={NEAR_MOUNTAIN_PATH} fill={nearMtn} />
 
-      {/* Twinkling fairy string lights (alive at both Night & Dusk!) */}
-      {fairyOpacity > 0.02 && (
-        <g opacity={fairyOpacity}>
-          <path d={WIRE_PATH} fill={C.plum} opacity={0.75} />
+      {/* Progressive sequential fairy string lights (bulbs ignite one-by-one as twilight sweeps across!) */}
+      {showFairyWire && (
+        <g opacity={Number((1 - smooth(0.74, 0.88, cp)).toFixed(2))}>
+          <path d={WIRE_PATH} fill={C.plum} opacity={0.72} />
           {FAIRY_XS.map((bx, i) => {
             const by = WIRE_POINTS[bx][1];
+            const bulbRatio = i / (FAIRY_XS.length - 1);
+            // Right-to-left cascade: bulbs illuminate progressively as darkness sweeps right->left
+            const threshold = 0.28 + bulbRatio * 0.56;
+            const lit = clamp((threshold - cp) / 0.14, 0, 1);
             const phase = (tick + i * 2) % 6;
             const palette = [C.cream, C.blush, C.honey, C.peach];
             const col = palette[i % palette.length];
             return (
               <g key={bx}>
-                {phase < 3 && (
-                  <rect x={bx - 1} y={by + 1} width={4} height={4} fill={col} opacity={0.3} />
+                {lit > 0.25 && phase < 4 && (
+                  <rect
+                    x={bx - 1}
+                    y={by + 1}
+                    width={4}
+                    height={4}
+                    fill={col}
+                    opacity={Number((lit * 0.34).toFixed(2))}
+                  />
                 )}
-                <rect x={bx} y={by + 2} width={2} height={2} fill={phase < 4 ? col : C.wine} />
+                <rect
+                  x={bx}
+                  y={by + 2}
+                  width={2}
+                  height={2}
+                  fill={lit > 0.35 && phase < 5 ? col : C.wine}
+                  opacity={Number((0.45 + lit * 0.55).toFixed(2))}
+                />
               </g>
             );
           })}
+        </g>
+      )}
+
+      {/* Distant bright morning sky birds */}
+      {cp >= 0.66 && (
+        <g fill={C.accent} opacity={Number((smooth(0.66, 0.86, cp) * 0.55).toFixed(2))}>
+          <path
+            d={
+              tick % 6 < 3
+                ? rectsPath([
+                    [114 + (tick % 16), 17, 2, 1],
+                    [116 + (tick % 16), 18, 1, 1],
+                    [117 + (tick % 16), 17, 2, 1],
+                    [146 - (tick % 12), 14, 2, 1],
+                    [148 - (tick % 12), 15, 1, 1],
+                    [149 - (tick % 12), 14, 2, 1],
+                  ])
+                : rectsPath([
+                    [114 + (tick % 16), 18, 5, 1],
+                    [146 - (tick % 12), 15, 5, 1],
+                  ])
+            }
+          />
         </g>
       )}
 
@@ -959,6 +1069,13 @@ export function DayNightScene({ p, motion = 0, facing = -1 }) {
 
       {/* Right Zone (x = 148..214): White Picket Fence + Sculpted 3-Tone Rose Garden + Butterflies */}
       <path d={FENCE_PICKETS_PATH} fill={fenceMain} />
+      {rimStrength > 0.1 && (
+        <path
+          d={Array.from({ length: 8 }, (_, i) => `M${152 + i * 9} 47h2v1h-2Z`).join('')}
+          fill={C.cream}
+          opacity={Number((rimStrength * 0.85).toFixed(2))}
+        />
+      )}
       <rect x={150} y={54} width={66} height={2} fill={fenceShade} />
       <rect x={150} y={62} width={66} height={2} fill={fenceShade} />
 
@@ -1077,35 +1194,71 @@ export function DayNightScene({ p, motion = 0, facing = -1 }) {
   );
 }
 
-const modeToPos = (mode) => THEME_MODES.indexOf(mode) / 2;
-const posToMode = (pos) => THEME_MODES[clamp(Math.round(pos * 2), 0, 2)];
-const rubber = (v) => (v < 0 ? Math.max(-0.12, v * 0.28) : v > 1 ? Math.min(1.12, 1 + (v - 1) * 0.28) : v);
+const modeToPos = (mode) => {
+  if (typeof mode === 'number' && Number.isFinite(mode)) return clamp(mode, 0, 1);
+  const idx = THEME_MODES.indexOf(mode);
+  return idx >= 0 ? idx / 2 : 0.5;
+};
+const rubber = (v) => (v < 0 ? Math.max(-0.09, v * 0.28) : v > 1 ? Math.min(1.09, 1 + (v - 1) * 0.28) : v);
 
-export default function DayNightSlider({ mode = 'auto', onChange }) {
+function nearestNotchIdx(x) {
+  for (let i = 0; i < HAPTIC_NOTCHES.length; i += 1) {
+    if (Math.abs(x - HAPTIC_NOTCHES[i]) <= NOTCH_HALF) return i;
+  }
+  return -1;
+}
+
+export default function DayNightSlider({
+  value,
+  mode = 'auto',
+  isAuto = false,
+  onScrub,
+  onChange,
+  onResetAuto,
+}) {
+  const initialPos = typeof value === 'number' && Number.isFinite(value) ? clamp(value, 0, 1) : modeToPos(mode);
   const rootRef = useRef(null);
-  const phys = useRef({ x: modeToPos(mode), v: 0, target: modeToPos(mode), raf: 0, last: 0 });
+  const phys = useRef({ x: initialPos, v: 0, target: initialPos, raf: 0, last: 0 });
   const drag = useRef(null);
-  const [pos, setPos] = useState(() => modeToPos(mode));
+  const lastTapRef = useRef({ t: 0, pos: -1 });
+  const hudTimerRef = useRef(null);
+  const onScrubRef = useRef(onScrub);
+  onScrubRef.current = onScrub;
+
+  const [pos, setPos] = useState(initialPos);
   const [dragging, setDragging] = useState(false);
+  const [hudVisible, setHudVisible] = useState(false);
   const [motion, setMotion] = useState(0);
   const [facing, setFacing] = useState(-1);
   const [squash, setSquash] = useState(0);
+  const [tilt, setTilt] = useState(0);
+
+  const flashHud = useCallback((ms = 1250) => {
+    setHudVisible(true);
+    if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+    hudTimerRef.current = setTimeout(() => {
+      hudTimerRef.current = null;
+      setHudVisible(false);
+    }, ms);
+  }, []);
 
   const stopSpring = () => {
     if (phys.current.raf) cancelAnimationFrame(phys.current.raf);
     phys.current.raf = 0;
   };
 
-  const springTo = useCallback((target, kick = 0) => {
+  const springTo = useCallback((target, kick = 0, emitScrub = true) => {
     const s = phys.current;
-    s.target = target;
+    s.target = clamp(target, 0, 1);
     s.v += kick;
     if (prefersReducedMotion()) {
-      s.x = target;
+      s.x = s.target;
       s.v = 0;
-      setPos(target);
+      setPos(s.target);
       setMotion(0);
       setSquash(0);
+      setTilt(0);
+      if (emitScrub) onScrubRef.current?.(s.target);
       return;
     }
     if (s.raf) return;
@@ -1113,13 +1266,17 @@ export default function DayNightSlider({ mode = 'auto', onChange }) {
     const step = (now) => {
       const dt = Math.min(1 / 30, (now - s.last) / 1000);
       s.last = now;
-      const a = -420 * (s.x - s.target) - 24 * s.v;
+      // Lively jelly-glass spring with gentle overshoot wobble on stop
+      const a = -340 * (s.x - s.target) - 20 * s.v;
       s.v += a * dt;
       s.x += s.v * dt;
       const speed = Math.abs(s.v);
+      const clampedX = clamp(s.x, 0, 1);
       setPos(s.x);
-      setMotion(clamp(speed * 0.9, 0, 1));
-      setSquash(clamp(s.v * 0.05, -0.14, 0.14));
+      setMotion(clamp(speed * 0.88, 0, 1));
+      setSquash(clamp(s.v * 0.058, -0.18, 0.18));
+      setTilt(clamp(s.v * 2.1, -6.5, 6.5));
+      if (emitScrub) onScrubRef.current?.(clampedX);
       if (Math.abs(s.x - s.target) < 0.0008 && speed < 0.01) {
         s.x = s.target;
         s.v = 0;
@@ -1127,6 +1284,8 @@ export default function DayNightSlider({ mode = 'auto', onChange }) {
         setPos(s.target);
         setMotion(0);
         setSquash(0);
+        setTilt(0);
+        if (emitScrub) onScrubRef.current?.(s.target);
         return;
       }
       s.raf = requestAnimationFrame(step);
@@ -1134,18 +1293,19 @@ export default function DayNightSlider({ mode = 'auto', onChange }) {
     s.raf = requestAnimationFrame(step);
   }, []);
 
-  // Follow external mode changes (e.g. restored preference) when the user is not dragging.
+  // Follow external value changes (e.g. Telegram theme change in auto mode, or restored preference)
   useEffect(() => {
     if (drag.current) return;
-    const target = modeToPos(mode);
-    if (Math.abs(phys.current.target - target) > 0.001) {
+    const target = typeof value === 'number' && Number.isFinite(value) ? clamp(value, 0, 1) : modeToPos(mode);
+    if (Math.abs(phys.current.target - target) > 0.002) {
       setFacing(target > phys.current.x ? -1 : 1);
-      springTo(target);
+      springTo(target, 0, true);
     }
-  }, [mode, springTo]);
+  }, [value, mode, springTo]);
 
   useEffect(() => () => {
     stopSpring();
+    if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
     lockVerticalSwipes(false);
   }, []);
 
@@ -1155,31 +1315,38 @@ export default function DayNightSlider({ mode = 'auto', onChange }) {
     return { x: rect.left + PAD + D / 2 + clamp(p, 0, 1) * TRAVEL, y: rect.top + H / 2 };
   };
 
-  const commit = (target) => {
-    const nextMode = posToMode(target);
+  const commit = (rawTarget, { kick = 0, showHud = true } = {}) => {
+    const target = settleDaylightPos(rawTarget);
+    const willAnimate = !prefersReducedMotion() && Math.abs(phys.current.x - target) > 0.006;
     setFacing(target > phys.current.x ? -1 : target < phys.current.x ? 1 : facing);
-    springTo(target);
-    if (nextMode !== mode) {
-      haptic('light');
-      onChange?.(nextMode, lensCenter(target));
-    }
+    springTo(target, kick, true);
+    if (showHud) flashHud();
+    haptic('light');
+    onChange?.(target, { origin: lensCenter(target), animating: willAnimate });
   };
 
   const onPointerDown = (e) => {
     if (e.button !== undefined && e.button !== 0) return;
     stopSpring();
-    rootRef.current?.setPointerCapture?.(e.pointerId);
+    try {
+      rootRef.current?.setPointerCapture?.(e.pointerId);
+    } catch {
+      // Ignore synthetic / WebView pointer capture rejections
+    }
     lockVerticalSwipes(true);
+    if (hudTimerRef.current) {
+      clearTimeout(hudTimerRef.current);
+      hudTimerRef.current = null;
+    }
     drag.current = {
       id: e.pointerId,
       startX: e.clientX,
-      startPos: phys.current.x,
+      startPos: clamp(phys.current.x, 0, 1),
       lastX: e.clientX,
       lastT: performance.now(),
       vel: 0,
       moved: false,
-      stop: Math.round(phys.current.x * 2),
-      t0: performance.now(),
+      notch: nearestNotchIdx(phys.current.x),
     };
     setDragging(true);
   };
@@ -1193,20 +1360,26 @@ export default function DayNightSlider({ mode = 'auto', onChange }) {
     const now = performance.now();
     const dt = Math.max(1, now - d.lastT) / 1000;
     const inst = (e.clientX - d.lastX) / TRAVEL / dt;
-    d.vel = d.vel * 0.65 + inst * 0.35;
+    d.vel = d.vel * 0.62 + inst * 0.38;
     d.lastX = e.clientX;
     d.lastT = now;
     const x = rubber(d.startPos + dx / TRAVEL);
+    const cx = clamp(x, 0, 1);
     phys.current.x = x;
     phys.current.v = d.vel;
     setPos(x);
-    setMotion(clamp(Math.abs(d.vel) * 0.9, 0, 1));
-    setSquash(clamp(d.vel * 0.05, -0.14, 0.14));
+    setMotion(clamp(Math.abs(d.vel) * 0.88, 0, 1));
+    setSquash(clamp(d.vel * 0.058, -0.18, 0.18));
+    setTilt(clamp(d.vel * 2.1, -6.5, 6.5));
     if (Math.abs(inst) > 0.05) setFacing(inst > 0 ? -1 : 1);
-    const stop = clamp(Math.round(x * 2), 0, 2);
-    if (stop !== d.stop) {
-      d.stop = stop;
+    onScrubRef.current?.(cx);
+
+    const notch = nearestNotchIdx(cx);
+    if (notch !== -1 && notch !== d.notch) {
+      d.notch = notch;
       haptic('selection');
+    } else if (notch === -1) {
+      d.notch = -1;
     }
   };
 
@@ -1216,44 +1389,75 @@ export default function DayNightSlider({ mode = 'auto', onChange }) {
     drag.current = null;
     setDragging(false);
     lockVerticalSwipes(false);
+
     if (!d.moved) {
       const rect = rootRef.current.getBoundingClientRect();
       const tapPos = clamp((e.clientX - rect.left - PAD - D / 2) / TRAVEL, 0, 1);
-      const target = Math.round(tapPos * 2) / 2;
-      if (Math.abs(target - modeToPos(mode)) < 0.01) {
+      // Quick tap thirds jump directly to Midnight (0), Sunset Dusk (0.5), or Bright Day (1)
+      const target = tapPos < 0.33 ? 0 : tapPos > 0.67 ? 1 : 0.5;
+      const now = performance.now();
+      const prevTap = lastTapRef.current;
+      const isDoubleTapSameSpot =
+        now - prevTap.t < 340 &&
+        Math.abs(tapPos - prevTap.pos) < 0.18 &&
+        Math.abs(target - clamp(phys.current.x, 0, 1)) < 0.08;
+      lastTapRef.current = { t: now, pos: tapPos };
+
+      if (isDoubleTapSameSpot && onResetAuto) {
+        haptic('success');
+        flashHud(1500);
+        onResetAuto();
+        return;
+      }
+
+      if (Math.abs(target - clamp(phys.current.x, 0, 1)) < 0.015) {
         haptic('selection');
-        springTo(target, target >= 1 ? -1.6 : 1.6);
+        flashHud();
+        springTo(target, target >= 1 ? -1.8 : 1.8, false);
+        if (isAuto) onChange?.(target, lensCenter(target));
       } else {
         commit(target);
       }
       return;
     }
-    const idle = performance.now() - d.lastT > 90;
-    const vel = idle ? 0 : clamp(d.vel, -4, 4);
-    const here = phys.current.x;
-    const nearest = clamp(Math.round(here * 2) / 2, 0, 1);
-    const projected = Math.abs(here - nearest) < 0.1 ? nearest : here + vel * 0.07;
-    commit(clamp(Math.round(projected * 2) / 2, 0, 1));
+
+    // Stepless release: keep light momentum and stop wherever the user releases!
+    const idle = performance.now() - d.lastT > 85;
+    const vel = idle ? 0 : clamp(d.vel, -3.2, 3.2);
+    const projected = clamp(phys.current.x + vel * 0.045, 0, 1);
+    commit(projected, { kick: vel * 0.18 });
   };
 
   const onKeyDown = (e) => {
-    const idx = THEME_MODES.indexOf(mode);
-    let next = idx;
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = idx - 1;
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = idx + 1;
+    const curr = clamp(phys.current.target, 0, 1);
+    if (e.key === 'r' || e.key === 'R') {
+      e.preventDefault();
+      flashHud(1500);
+      onResetAuto?.();
+      return;
+    }
+    let next = curr;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = clamp(curr - 0.125, 0, 1);
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = clamp(curr + 0.125, 0, 1);
     else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = 2;
-    else if (e.key === 'Enter' || e.key === ' ') next = (idx + 1) % 3;
-    else return;
+    else if (e.key === 'End') next = 1;
+    else if (e.key === 'Enter' || e.key === ' ') {
+      const stops = [0, 0.5, 0.75, 1];
+      const nextStop = stops.find((s) => s > curr + 0.04);
+      next = nextStop !== undefined ? nextStop : 0;
+    } else return;
     e.preventDefault();
-    commit(clamp(next, 0, 2) / 2);
+    commit(next);
   };
 
-  const lensX = clamp(pos, -0.12, 1.12) * TRAVEL;
+  const cp = clamp(pos, 0, 1);
+  const stage = describeDaylightStage(cp);
+  const lensX = clamp(pos, -0.09, 1.09) * TRAVEL;
   const cx = PAD + D / 2 + lensX;
   const cy = H / 2 + 4; // focus slightly below centre so the crystal bubble frames cottage / bunny / roses
   const lensTx = Math.round(D / 2 - cx * ZOOM);
   const lensTy = Math.round(D / 2 - cy * ZOOM);
+  const pct = Math.round(cp * 100);
 
   return (
     <div
@@ -1261,12 +1465,12 @@ export default function DayNightSlider({ mode = 'auto', onChange }) {
       className={`dn-slider${dragging ? ' is-dragging' : ''}`}
       role="slider"
       tabIndex={0}
-      aria-label="昼夜主题"
+      aria-label="无级昼夜调光"
       aria-valuemin={0}
-      aria-valuemax={2}
-      aria-valuenow={THEME_MODES.indexOf(mode)}
-      aria-valuetext={MODE_LABEL[mode]}
-      title={`${MODE_LABEL[mode]}（拖动气泡或点按切换）`}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+      aria-valuetext={`${stage.clock} ${stage.label}${isAuto ? '（跟随系统）' : ''}`}
+      title={`${stage.clock} · ${stage.label}（拖动无级调光 · 点按三段直达 · 双击恢复跟随 Telegram）`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
@@ -1274,23 +1478,33 @@ export default function DayNightSlider({ mode = 'auto', onChange }) {
       onKeyDown={onKeyDown}
     >
       <div className="dn-track">
-        <DayNightScene p={clamp(pos, 0, 1)} motion={motion} facing={facing} />
+        <DayNightScene p={cp} motion={motion} facing={facing} />
       </div>
       <div className="dn-lens" style={{ transform: `translate3d(${Math.round(lensX)}px,0,0)` }}>
         <div
           className="dn-lens-body"
-          style={{ '--sx': (1 + Math.abs(squash)).toFixed(3), '--sy': (1 - Math.abs(squash) * 0.7).toFixed(3) }}
+          style={{
+            '--sx': (1 + Math.abs(squash)).toFixed(3),
+            '--sy': (1 - Math.abs(squash) * 0.68).toFixed(3),
+            '--tilt': `${tilt.toFixed(2)}deg`,
+          }}
         >
           <div className="dn-lens-view">
             <div
               className="dn-lens-scene"
               style={{ transform: `translate(${lensTx}px, ${lensTy}px) scale(${ZOOM})` }}
             >
-              <DayNightScene p={clamp(pos, 0, 1)} motion={motion} facing={facing} />
+              <DayNightScene p={cp} motion={motion} facing={facing} />
             </div>
           </div>
           <span className="dn-lens-glass" />
         </div>
+      </div>
+      <div className={`dn-hud${dragging || hudVisible ? ' is-visible' : ''}`} aria-hidden="true">
+        <span className="dn-hud-clock">{stage.clock}</span>
+        <span className="dn-hud-sep">·</span>
+        <span className="dn-hud-label">{stage.short}</span>
+        {isAuto && <span className="dn-hud-auto">自动</span>}
       </div>
     </div>
   );

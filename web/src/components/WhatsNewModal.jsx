@@ -11,6 +11,22 @@ export const SEEN_VERSION_STORAGE_KEY = 'rose_seen_version';
 
 export const RECENT_RELEASES = [
   {
+    version: '2.1.2',
+    url: 'https://github.com/mango0114/rose-panel-bot/releases/tag/v2.1.2',
+    items: [
+      {
+        tag: '新增',
+        tone: 'new',
+        text: '无级昼夜光影调光：拖动顶部小兔子气泡可在 0%～100% 任意位置停靠并实时平滑渐变整页配色（午夜 → 星夜 → 落日黄昏 → 破晓雾光 → 晨雾柔光 → 白天），覆盖全部 5 套主题且高亮度下柔和不刺眼；点按左/中/右直达三段，双击恢复跟随 Telegram',
+      },
+      {
+        tag: '改进',
+        tone: 'imp',
+        text: '滑块升级 2.15× 果冻色散玻璃旋钮与回弹手感，像素场景新增晨昏光幕扫过、14 盏挂灯逐盏亮灭、屋脊暖金顶光与拖动时刻悬浮胶囊',
+      },
+    ],
+  },
+  {
     version: '2.1.1',
     url: 'https://github.com/mango0114/rose-panel-bot/releases/tag/v2.1.1',
     items: [

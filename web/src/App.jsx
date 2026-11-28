@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import {
   Globe,
   IdCard,
@@ -10,7 +9,7 @@ import {
   Trophy,
   Users,
 } from 'lucide-react';
-import DayNightSlider, { THEME_MODES } from './components/DayNightSlider.jsx';
+import DayNightSlider from './components/DayNightSlider.jsx';
 import { TicketEmblem } from './components/Emblems.jsx';
 import LeaderboardTab from './components/LeaderboardTab.jsx';
 import ProbeTab from './components/ProbeTab.jsx';
@@ -29,7 +28,12 @@ import {
   onColorSchemeChange,
   syncTelegramChrome,
 } from './lib/telegram.js';
-import { normalizeDockStyle, normalizeThemePreset } from './lib/themes.js';
+import {
+  applyDaylightThemeToDocument,
+  normalizeDaylightPos,
+  normalizeDockStyle,
+  normalizeThemePreset,
+} from './lib/themes.js';
 
 const BOOT_CACHE_PREFIX = 'rose_panel_boot_v1:';
 const THEME_MODE_STORAGE_KEY = 'rose_panel_theme_mode';
@@ -46,14 +50,22 @@ function sortNavItemsByOrder(items, rawOrder) {
   return [...items].sort((a, b) => rank(a.id) - rank(b.id));
 }
 
-function readThemeMode() {
+function readDaylightPref() {
   try {
     const saved = localStorage.getItem(THEME_MODE_STORAGE_KEY);
-    if (THEME_MODES.includes(saved)) return saved;
+    if (!saved || saved === 'auto') return { auto: true, pos: null };
+    if (saved === 'dark') return { auto: false, pos: 0 };
+    if (saved === 'light') return { auto: false, pos: 1 };
+    if (saved.startsWith('pos:')) {
+      const n = Number(saved.slice(4));
+      if (Number.isFinite(n)) return { auto: false, pos: normalizeDaylightPos(n) };
+    }
+    const num = Number(saved);
+    if (Number.isFinite(num)) return { auto: false, pos: normalizeDaylightPos(num) };
   } catch {
     // Storage may be unavailable in some WebViews
   }
-  return 'auto';
+  return { auto: true, pos: null };
 }
 const BOOT_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
@@ -165,9 +177,14 @@ function SplashScreen({ splash }) {
 }
 
 export default function App() {
-  const [themeMode, setThemeMode] = useState(readThemeMode);
+  const [daylightPref, setDaylightPref] = useState(readDaylightPref);
   const [systemTheme, setSystemTheme] = useState(() => getTelegramColorScheme());
-  const theme = themeMode === 'auto' ? systemTheme : themeMode;
+  const daylightPos = daylightPref.auto
+    ? (systemTheme === 'dark' ? 0 : 1)
+    : normalizeDaylightPos(daylightPref.pos, 0.5);
+  const chromeThrottleRef = useRef(0);
+  const liveDaylightRef = useRef(daylightPos);
+  const animatingDaylightRef = useRef(false);
   const [bootstrap, setBootstrap] = useState(() => loadCachedBootstrap());
   const [bootstrapFresh, setBootstrapFresh] = useState(false);
   const [loading, setLoading] = useState(() => !loadCachedBootstrap());
@@ -213,52 +230,67 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-palette', activeThemePreset);
     document.documentElement.setAttribute('data-dock', activeDockStyle);
-    syncTelegramChrome(theme, activeThemePreset);
-  }, [theme, activeThemePreset, activeDockStyle]);
+    const posToApply = animatingDaylightRef.current ? liveDaylightRef.current : daylightPos;
+    liveDaylightRef.current = posToApply;
+    applyDaylightThemeToDocument(posToApply, activeThemePreset);
+    syncTelegramChrome(posToApply, activeThemePreset);
+  }, [daylightPos, activeThemePreset, activeDockStyle]);
 
   useEffect(() => onColorSchemeChange(setSystemTheme), []);
 
-  // Switch theme mode; when the visible theme flips, reveal it as a circle growing out of the slider bubble.
-  const changeThemeMode = useCallback(
-    (nextMode, origin) => {
+  // 60fps real-time daylight scrubbing directly onto CSS vars (zero React tree re-render!)
+  const scrubDaylight = useCallback(
+    (livePos) => {
+      liveDaylightRef.current = livePos;
+      applyDaylightThemeToDocument(livePos, activeThemePreset);
+      const now = performance.now();
+      if (now - chromeThrottleRef.current >= 80) {
+        chromeThrottleRef.current = now;
+        syncTelegramChrome(livePos, activeThemePreset);
+      }
+      if (animatingDaylightRef.current && Math.abs(livePos - daylightPos) < 0.002) {
+        animatingDaylightRef.current = false;
+        syncTelegramChrome(livePos, activeThemePreset);
+      }
+    },
+    [activeThemePreset, daylightPos],
+  );
+
+  // Persist settled stepless daylight position (0..1); when the slider spring is actively sweeping,
+  // avoid jumping colors ahead of the bubble so the full-page daylight sweeps in physical lockstep.
+  const commitDaylight = useCallback(
+    (nextPos, meta = {}) => {
+      const clean = normalizeDaylightPos(nextPos, 0.5);
       try {
-        localStorage.setItem(THEME_MODE_STORAGE_KEY, nextMode);
+        localStorage.setItem(THEME_MODE_STORAGE_KEY, `pos:${clean}`);
       } catch {
         // Ignore storage failures
       }
-      const nextTheme = nextMode === 'auto' ? systemTheme : nextMode;
-      const canAnimate =
-        nextTheme !== theme &&
-        origin &&
-        typeof document !== 'undefined' &&
-        typeof document.startViewTransition === 'function' &&
-        !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      if (!canAnimate) {
-        setThemeMode(nextMode);
-        return;
+      const isSpringSweeping = Boolean(meta?.animating);
+      animatingDaylightRef.current = isSpringSweeping;
+      setDaylightPref({ auto: false, pos: clean });
+      if (!isSpringSweeping) {
+        liveDaylightRef.current = clean;
+        applyDaylightThemeToDocument(clean, activeThemePreset);
+        syncTelegramChrome(clean, activeThemePreset);
       }
-      const transition = document.startViewTransition(() => {
-        flushSync(() => setThemeMode(nextMode));
-        document.documentElement.setAttribute('data-theme', nextTheme);
-      });
-      transition.ready
-        .then(() => {
-          const radius = Math.hypot(
-            Math.max(origin.x, window.innerWidth - origin.x),
-            Math.max(origin.y, window.innerHeight - origin.y),
-          );
-          document.documentElement.animate(
-            { clipPath: [`circle(16px at ${origin.x}px ${origin.y}px)`, `circle(${radius}px at ${origin.x}px ${origin.y}px)`] },
-            { duration: 560, easing: 'cubic-bezier(0.22, 0.8, 0.2, 1)', pseudoElement: '::view-transition-new(root)' },
-          );
-        })
-        .catch(() => {});
     },
-    [systemTheme, theme],
+    [activeThemePreset],
   );
+
+  // Double-tap on slider restores automatic Telegram system dark/light following
+  const resetDaylightAuto = useCallback(() => {
+    try {
+      localStorage.setItem(THEME_MODE_STORAGE_KEY, 'auto');
+    } catch {
+      // Ignore storage failures
+    }
+    animatingDaylightRef.current = false;
+    setDaylightPref({ auto: true, pos: null });
+    showToast('已恢复跟随 Telegram 深浅模式');
+  }, [showToast]);
 
   const loadBootstrap = useCallback(async ({ silent = false } = {}) => {
     try {
@@ -446,7 +478,13 @@ export default function App() {
         </div>
 
         <div className="top-actions">
-          <DayNightSlider mode={themeMode} onChange={changeThemeMode} />
+          <DayNightSlider
+            value={daylightPos}
+            isAuto={daylightPref.auto}
+            onScrub={scrubDaylight}
+            onChange={commitDaylight}
+            onResetAuto={resetDaylightAuto}
+          />
           {isAdmin && (
             <button
               className="icon-btn accent"

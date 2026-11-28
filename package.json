@@ -1,6 +1,6 @@
 {
   "name": "rose-panel-bot",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "private": false,
   "type": "module",
   "description": "Rose-themed Telegram Mini App Personal Panel, Komari Probe Monitor, Bidirectional Anti-Spam PM Bot, and Optional Group Check-in System on Cloudflare Workers.",
